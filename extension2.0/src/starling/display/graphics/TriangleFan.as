@@ -1,10 +1,6 @@
 package starling.display.graphics
 {
-	import starling.core.RenderSupport;
-	import starling.core.Starling;
-	import starling.textures.Texture;
-	
-	public class TriangleFan extends Graphic
+public class TriangleFan extends Graphic
 	{
 		private var numVertices		:int;
 		

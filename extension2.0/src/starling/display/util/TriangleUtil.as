@@ -1,8 +1,8 @@
-package starling.display.graphics.util 
+package starling.display.util
 {
-	import flash.geom.Point;
-	
-	public class TriangleUtil 
+import flash.geom.Point;
+
+public class TriangleUtil
 	{
 		
 		public function TriangleUtil() 
@@ -54,7 +54,7 @@ package starling.display.graphics.util
 			return false;	
 		}
 		
-		public static function lineIntersectLine(line1V0x:Number, line1V0y:Number, line1V1x:Number, line1V1y:Number, line2V0x:Number, line2V0y:Number, line2V1x:Number, line2V1y:Number, intersectPoint:Point ) : Boolean
+		public static function lineIntersectLine(line1V0x:Number, line1V0y:Number, line1V1x:Number, line1V1y:Number, line2V0x:Number, line2V0y:Number, line2V1x:Number, line2V1y:Number, intersectPoint:Point) : Boolean
 		{
  
 			var a1:Number = line1V1y-line1V0y;
