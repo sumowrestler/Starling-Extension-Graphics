@@ -4,14 +4,13 @@ package starling.display.graphics
 	import flash.display3D.IndexBuffer3D;
 	import flash.display3D.VertexBuffer3D;
 	import flash.geom.Matrix;
+	import flash.geom.Matrix3D;
 	import flash.geom.Point;
 	import flash.geom.Rectangle;
 	import flash.utils.Dictionary;
-	import starling.display.geom.GraphicsPolygon;
-	import starling.display.graphics.util.IGraphicDrawHelper;
-	import starling.geom.Polygon;
+	import starling.rendering.Painter;
 	
-	import starling.core.RenderSupport;
+	//import starling.core.RenderSupport;
 	import starling.core.Starling;
 	import starling.display.BlendMode;
 	import starling.display.DisplayObject;
@@ -22,10 +21,6 @@ package starling.display.graphics
 	import starling.errors.AbstractMethodError;
 	import starling.errors.MissingContextError;
 	import starling.events.Event;
-	import starling.utils.getNextPowerOfTwo;
-	import starling.textures.Texture;
-	import starling.textures.SubTexture;
-	
 	
 	/**
 	 * Abstract, do not instantiate directly
@@ -44,15 +39,10 @@ package starling.display.graphics
 		protected var vertices		:Vector.<Number>;
 		protected var indices		:Vector.<uint>;
 		protected var _uvMatrix		:Matrix;
-		
-		protected var buffersInvalid		:Boolean = false;
-		protected var geometryInvalid		:Boolean = false;
+		protected var isInvalid		:Boolean = false;
 		protected var uvsInvalid	:Boolean = false;
-		protected var uvMappingsChanged:Boolean = false;
-		protected var isGeometryScaled:Boolean = false;
 		
-		
-	//	protected var hasValidatedGeometry:Boolean = false;
+		protected var hasValidatedGeometry:Boolean = false;
 				
 		private static var sGraphicHelperRect:Rectangle = new Rectangle();
 		private static var sGraphicHelperPoint:Point = new Point();
@@ -69,9 +59,6 @@ package starling.display.graphics
 		protected var _precisionHitTest:Boolean = false;
 		protected var _precisionHitTestDistance:Number = 0; // This is added to the thickness of the line when doing precisionHitTest to make it easier to hit 1px lines etc
 		
-		// Attempt to allow partial rendering of graphics. Mostly useful for Strokes, I would guess.
-		protected var _graphicDrawHelper:IGraphicDrawHelper = null;
-					
 		public function Graphic()
 		{
 			indices = new Vector.<uint>();
@@ -106,9 +93,9 @@ package starling.display.graphics
 		
 		private function onContextCreated( event:Event ):void
 		{
-			geometryInvalid = true;
+			hasValidatedGeometry = false;
 			
-			buffersInvalid = true;
+			isInvalid = true;
 			uvsInvalid = true;
 			_material.restoreOnLostContext();
 			
@@ -142,8 +129,7 @@ package starling.display.graphics
 			
 			if ( material )
 			{
-				//material.dispose(); Material should NOT be disposed here. It can be used elsewhere - Graphic is NOT owner of Material.
-				material.releaseProgramRef(); // However, the material needs to release a reference count in the program cache, through this new method.
+				material.dispose();
 				material = null;
 			}
 			
@@ -153,7 +139,7 @@ package starling.display.graphics
 			minBounds = null;
 			maxBounds = null;
 			
-			geometryInvalid = true;
+			hasValidatedGeometry = false;
 		}
 		
 		public function set material( value:IMaterial ):void
@@ -176,7 +162,7 @@ package starling.display.graphics
 		{
 			_uvMatrix = value;
 			uvsInvalid = true;
-			geometryInvalid = true;
+			hasValidatedGeometry = false;
 		}
 		
 		
@@ -211,10 +197,11 @@ package starling.display.graphics
 		/** Returns the object that is found topmost beneath a point in local coordinates, or nil if 
          *  the test fails. If "forTouch" is true, untouchable and invisible objects will cause
          *  the test to fail. */
-        override public function hitTest(localPoint:Point, forTouch:Boolean=false):DisplayObject
+		//override public function hitTest(localPoint:Point, forTouch:Boolean=false):DisplayObject
+        override public function hitTest(localPoint:Point):DisplayObject
         {
             // on a touch test, invisible or untouchable objects cause the test to fail
-            if (forTouch && (visible == false || touchable == false )) return null;
+            if (visible == false || touchable == false ) return null;
             if ( minBounds == null || maxBounds == null ) return null;
 			
 			// otherwise, check bounding box
@@ -243,7 +230,7 @@ package starling.display.graphics
 				resultRect.x = minBounds.x;
 				resultRect.y = minBounds.y;
 				resultRect.right = maxBounds.x;
-				resultRect.bottom = maxBounds.y; 
+				resultRect.bottom = maxBounds.y;
 				if ( _precisionHitTest )
 				{	
 					resultRect.x -= _precisionHitTestDistance;
@@ -251,17 +238,24 @@ package starling.display.graphics
 					resultRect.width += _precisionHitTestDistance * 2;
 					resultRect.height += _precisionHitTestDistance * 2;
 				}
-				
 				return resultRect;
 			}
-						
+			
 			getTransformationMatrix(targetSpace, sHelperMatrix);
 			var m:Matrix = sHelperMatrix;
 			
-			sGraphicHelperPointTR.x = minBounds.x + (maxBounds.x - minBounds.x)
-			sGraphicHelperPointTR.y = minBounds.y;
-			sGraphicHelperPointBL.x = minBounds.x;
-			sGraphicHelperPointBL.y =  minBounds.y + (maxBounds.y - minBounds.y);
+			if (minBounds != null)
+			{
+				sGraphicHelperPointTR.x = minBounds.x + (maxBounds.x - minBounds.x)
+				sGraphicHelperPointTR.y = minBounds.y;
+				sGraphicHelperPointBL.x = minBounds.x;
+				sGraphicHelperPointBL.y =  minBounds.y + (maxBounds.y - minBounds.y);
+			}
+			else
+			{
+				return resultRect;
+			}
+			
 			/*
 			 * Old version, 2 point allocations
 			 * var tr:Point = new Point(minBounds.x + (maxBounds.x - minBounds.x), minBounds.y);
@@ -317,53 +311,20 @@ package starling.display.graphics
 			}
 		}
 		
-		public function adjustUVMappings(x:Number, y:Number, texture:Texture) : void
-		{
-			
-			var w:Number = getNextPowerOfTwo(texture.nativeWidth);
-			var h:Number = getNextPowerOfTwo(texture.nativeHeight);
-			
-			var invW:Number = 1.0 / w;
-			var invH:Number = 1.0 / h;
-			
-			var vertX:Number;
-			var vertY:Number;
-			var u:Number;
-			var v:Number;
-			
-			if ( vertices == null || vertices.length == 0 )
-				return;
-			var numVerts:int = vertices.length;	
-			for ( var i:int = 0; i < numVerts; i += VERTEX_STRIDE )
-			{
-				vertX = vertices[i];
-				vertY = vertices[i+1];
-				
-				u = (x + vertX) * invW;
-				v = (y + vertY) * invH;
-				
-				vertices[i+7] = u;
-				vertices[i+8] = v;
-			}
-			
-			uvMappingsChanged = true;
-			_uvMatrix = null;
-			
-		}
-		
-		
 		public function validateNow():void
 		{
-			if ( geometryInvalid == false && uvMappingsChanged == false )
+			if ( hasValidatedGeometry )
 				return;
 			
-			if ( vertexBuffer && (buffersInvalid || uvsInvalid || isGeometryScaled ) )
+			hasValidatedGeometry = true;
+			
+			if ( vertexBuffer && (isInvalid || uvsInvalid) )
 			{
 				vertexBuffer.dispose();
 				indexBuffer.dispose();
 			}
 			
-			if ( buffersInvalid || geometryInvalid )
+			if ( isInvalid )
 			{
 				buildGeometry();
 				applyUVMatrix();
@@ -374,20 +335,21 @@ package starling.display.graphics
 			}
 		}
 		
-		protected function setGeometryInvalid(invalidateBuffers:Boolean = true) : void
+		protected function setGeometryInvalid() : void
 		{
-			if ( invalidateBuffers )
-				buffersInvalid = true;
-			geometryInvalid = true;
+			isInvalid = true;
+			hasValidatedGeometry = false;
 		}
 		
-		override public function render( renderSupport:RenderSupport, parentAlpha:Number ):void
+		
+		override public function render( renderSupport:Painter ):void
 		{
+			//, parentAlpha:Number
 			validateNow();
 			
 			if ( indices == null || indices.length < 3 ) return; 
 			
-			if ( buffersInvalid || uvsInvalid || isGeometryScaled )
+			if ( isInvalid || uvsInvalid )
 			{
 				// Upload vertex/index buffers.
 				var numVertices:int = vertices.length / VERTEX_STRIDE;
@@ -395,35 +357,23 @@ package starling.display.graphics
 				vertexBuffer.uploadFromVector( vertices, 0, numVertices )
 				indexBuffer = Starling.context.createIndexBuffer( indices.length );
 				indexBuffer.uploadFromVector( indices, 0, indices.length );
-				buffersInvalid = uvsInvalid = isGeometryScaled = geometryInvalid = false;
+				
+				isInvalid = uvsInvalid = false;
 			}
-			else if ( geometryInvalid || uvMappingsChanged )
-			{
-				vertexBuffer.uploadFromVector( vertices, 0, vertices.length / VERTEX_STRIDE )
-				indexBuffer.uploadFromVector( indices, 0, indices.length );
-				geometryInvalid = false;
-				uvMappingsChanged = false;
-			}
+			
+			
+			// always call this method when you write custom rendering code!
+			// it causes all previously batched quads/images to render.
+			renderSupport.finishMeshBatch();
+			//renderSupport.finishQuadBatch();
 			
 			var context:Context3D = Starling.context;
 			if (context == null) throw new MissingContextError();
 			
-			// always call this method when you write custom rendering code!
-			// it causes all previously batched quads/images to render.
-			renderSupport.finishQuadBatch();
+			//var blendFactors:Array = BlendMode.getBlendFactors(this.blendMode == BlendMode.AUTO ? renderSupport.state.blendMode : this.blendMode, _material.premultipliedAlpha); 
+            //Starling.context.setBlendFactors(blendFactors[0], blendFactors[1]);
 			
-			if ( _graphicDrawHelper )
-			{
-				_graphicDrawHelper.onDrawTriangles(_material, renderSupport, vertexBuffer, indexBuffer, parentAlpha * this.alpha);
-			}
-			else
-			{
-				RenderSupport.setBlendFactors(_material.premultipliedAlpha, this.blendMode == BlendMode.AUTO ? renderSupport.blendMode : this.blendMode);
-				_material.drawTriangles( Starling.context, renderSupport.mvpMatrix3D, vertexBuffer, indexBuffer, parentAlpha * this.alpha);
-				renderSupport.raiseDrawCount();
-			}
-
-			
+			_material.drawTriangles(Starling.context, renderSupport.state.mvpMatrix3D, vertexBuffer, indexBuffer, this.alpha );
 			
 			
 			context.setTextureAt(0, null);
@@ -431,57 +381,6 @@ package starling.display.graphics
 			context.setVertexBufferAt(0, null);
 			context.setVertexBufferAt(1, null);
 			context.setVertexBufferAt(2, null);
-			
 		}
-		
-		
-		public function exportToPolygon(prevPolygon:GraphicsPolygon = null) : GraphicsPolygon
-		{
-			validateNow();
-			
-			var startIndex:int = 0;
-			var startIndices:int = 0;
-			
-			if ( prevPolygon )
-			{
-				startIndex = prevPolygon.lastVertexIndex <= 0 ? 0 : prevPolygon.lastVertexIndex * VERTEX_STRIDE;
-				startIndices = prevPolygon.lastIndexIndex <= 0 ? 0 : prevPolygon.lastIndexIndex * VERTEX_STRIDE;
-			}
-			
-			var newVertArray:Array = new Array();
-			var vertLen:int = vertices.length;
-			
-			for ( var i:int = startIndex; i < vertLen; i += VERTEX_STRIDE )
-			{
-				newVertArray.push(vertices[i + 0]);
-				newVertArray.push(vertices[i + 1]);
-			}
-			
-			if ( prevPolygon == null )
-			{
-				var retval:GraphicsPolygon = new GraphicsPolygon(newVertArray, indices);
-				return retval;
-			}
-			else
-			{
-				prevPolygon.append(newVertArray, indices);
-				return prevPolygon;
-			}
-			
-		}
-		
-
-		public function set graphicDrawHelper(gdh:IGraphicDrawHelper) : void
-		{
-			validateNow();
-			_graphicDrawHelper = gdh;
-			_graphicDrawHelper.initialize(vertices.length / VERTEX_STRIDE);
-		}
-		
-		public function get graphicDrawHelper() : IGraphicDrawHelper
-		{
-			return _graphicDrawHelper;
-		}
-		
 	}
 }

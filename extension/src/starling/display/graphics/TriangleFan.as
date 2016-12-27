@@ -37,7 +37,18 @@ package starling.display.graphics
 			vertices[index * 9] = x;
 			vertices[index * 9 + 1] = y;
 			
-			if ( isInvalid == false )
+			if ( buffersInvalid == false )
+				setGeometryInvalid();
+		}
+		
+		public function modifyVertexColor(index:int, r:Number = 1, g:Number = 1, b:Number = 1, a:Number = 1) : void
+		{
+			vertices[index * 9 + 3] = r;
+			vertices[index * 9 + 4] = g;
+			vertices[index * 9 + 5] = b;
+			vertices[index * 9 + 6] = a;
+			
+			if ( buffersInvalid == false )
 				setGeometryInvalid();
 		}
 		

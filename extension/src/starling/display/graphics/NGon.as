@@ -15,6 +15,7 @@ package starling.display.graphics
 	import starling.core.RenderSupport;
 	import starling.core.Starling;
 	import starling.display.graphics.util.TriangleUtil;
+	import starling.geom.Polygon;
 
 	public class NGon extends Graphic
 	{
@@ -26,16 +27,21 @@ package starling.display.graphics
 		private var _endAngle		:Number;
 		private var _numSides		:int;
 		private var _color			:uint = 0xFFFFFF;
+		private var _textureAlongPath:Boolean = false;
+		private var _forceTexturedCircle:Boolean = false;
+		private var _forceAntiAliasedCircle:Boolean = false;
 		
 		private static var _uv		:Point;
 		
-		public function NGon( radius:Number = 100, numSides:int = 10, innerRadius:Number = 0, startAngle:Number = 0, endAngle:Number = 360 )
+		public function NGon( radius:Number = 100, numSides:int = 10, innerRadius:Number = 0, startAngle:Number = 0, endAngle:Number = 360, textureAlongPath:Boolean = false )
 		{
 			this.radius = radius;
 			this.numSides = numSides;
 			this.innerRadius = innerRadius;
 			this.startAngle = startAngle;
 			this.endAngle = endAngle;
+			
+			this._textureAlongPath = textureAlongPath;
 			
 			minBounds.x = minBounds.y = -radius;
 			maxBounds.x = maxBounds.y = radius;
@@ -46,6 +52,20 @@ package starling.display.graphics
 			}
 		}
 		
+		public static function createTexturedCircle(radius:Number = 100, numSides:int = 10) : NGon
+		{
+			var retval:NGon = new NGon(radius, numSides, 0, 0, 360, false);
+			retval._forceTexturedCircle = true;
+			return retval;
+		}
+		
+		public static function createAntiAliasedCircle(radius:Number = 100, numSides:int = 10) : NGon
+		{
+			var retval:NGon = new NGon(radius, numSides, 0, 0, 360, false);
+			retval._forceAntiAliasedCircle = true;
+			return retval;
+		}
+				
 		public function get endAngle():Number
 		{
 			return _endAngle;
@@ -127,6 +147,7 @@ package starling.display.graphics
 			// between them.
 			var sa:Number = _startAngle;
 			var ea:Number = _endAngle;
+			var isEqual:Boolean = sa == ea;
 			var sSign:int = sa < 0 ? -1 : 1;
 			var eSign:int = ea < 0 ? -1 : 1;
 			sa *= sSign;
@@ -152,14 +173,23 @@ package starling.display.graphics
 			
 			// Based upon the input values, choose from
 			// 4 primitive types. Each more complex than the next.
-			var isSegment:Boolean = sa != 0 || ea != 0;
+			var isSegment:Boolean = (sa != 0 || ea != 0);
+			if ( isSegment == false )
+				isSegment = isEqual; // if sa and ea are equal, treat that as a segment, not a full lap around a circle.
+				
 			if ( innerRadius == 0 && !isSegment )
 			{
-				buildSimpleNGon(radius, _numSides, vertices, indices, _uvMatrix , _color);
+				if ( _forceAntiAliasedCircle )
+					buildAntiAliasedCircle(radius, numSides, vertices, indices, _uvMatrix , _color);
+				else if ( _forceTexturedCircle )
+					buildTexturedCircle(radius, numSides, vertices, indices, _uvMatrix , _color);
+				else
+					buildSimpleNGon(radius, _numSides, vertices, indices, _uvMatrix , _color);
+					
 			}
 			else if ( innerRadius != 0 && !isSegment )
 			{
-				buildHoop(innerRadius, radius, _numSides, vertices, indices, _uvMatrix , _color);
+				buildHoop(innerRadius, radius, _numSides, vertices, indices, _uvMatrix , _color, _textureAlongPath);
 			}
 			else if ( innerRadius == 0 )
 			{
@@ -167,7 +197,7 @@ package starling.display.graphics
 			}
 			else
 			{
-				buildArc( innerRadius, radius, sa, ea, _numSides, vertices, indices, _uvMatrix , _color);
+				buildArc( innerRadius, radius, sa, ea, _numSides, vertices, indices, _uvMatrix , _color, _textureAlongPath);
 			}
 		}
 		
@@ -248,8 +278,91 @@ package starling.display.graphics
 				s = ns;
 			}
 		}
+
+		private static function buildTexturedCircle( radius:Number, numSides:int, vertices:Vector.<Number>, indices:Vector.<uint>, uvMatrix:Matrix, color:uint ):void
+		{
+			var numVertices:int = 0;
+			
+			_uv.x = 0.5;
+			_uv.y = 0.5;
+			if ( uvMatrix ) 
+				_uv = uvMatrix.transformPoint(_uv);
+			
+			var r:Number = (color >> 16) / 255;
+			var g:Number = ((color & 0x00FF00) >> 8) / 255;
+			var b:Number = (color & 0x0000FF) / 255;
+				
+			vertices.push( 0, 0, 0, r, g, b, 1, _uv.x, _uv.y );
+			numVertices++;
+			
+			var anglePerSide:Number = (Math.PI * 2) / numSides;
+			var cosA:Number = Math.cos(anglePerSide);
+			var sinB:Number = Math.sin(anglePerSide);
+			var s:Number = 0.0;
+			var c:Number = 1.0;
+			var halfInvRadius:Number = 0.5 * (1.0 / radius);
+			
+			for ( var i:int = 0; i < numSides; i++ )
+			{
+				var x:Number = s * radius;
+				var y:Number = -c * radius;
+				_uv.x = 0.5 + x * halfInvRadius;
+				_uv.y = 0.5 + y * halfInvRadius;
+				
+				vertices.push( x, y, 0, r, g, b, 1, _uv.x, _uv.y );
+				numVertices++;
+				indices.push( 0, numVertices-1, i == numSides-1 ? 1 : numVertices );
+				
+				const ns:Number = sinB*c + cosA*s;
+				const nc:Number = cosA*c - sinB*s;
+				c = nc;
+				s = ns;
+			}
+		}
+
+		private static function buildAntiAliasedCircle( radius:Number, numSides:int, vertices:Vector.<Number>, indices:Vector.<uint>, uvMatrix:Matrix, color:uint ):void
+		{
+			var numVertices:int = 0;
+			
+			_uv.x = 0.5;
+			_uv.y = 1.0;
+			if ( uvMatrix ) 
+				_uv = uvMatrix.transformPoint(_uv);
+			
+			var r:Number = (color >> 16) / 255;
+			var g:Number = ((color & 0x00FF00) >> 8) / 255;
+			var b:Number = (color & 0x0000FF) / 255;
+				
+			vertices.push( 0, 0, 0, r, g, b, 1, _uv.x, _uv.y );
+			numVertices++;
+			
+			var anglePerSide:Number = (Math.PI * 2) / numSides;
+			var cosA:Number = Math.cos(anglePerSide);
+			var sinB:Number = Math.sin(anglePerSide);
+			var s:Number = 0.0;
+			var c:Number = 1.0;
+			var halfInvRadius:Number = 0.5 * (1.0 / radius);
+			
+			for ( var i:int = 0; i < numSides; i++ )
+			{
+				var x:Number = s * radius;
+				var y:Number = -c * radius;
+				_uv.x = 0.5 + x * halfInvRadius;
+				_uv.y = 0;
+				
+				vertices.push( x, y, 0, r, g, b, 1, _uv.x, _uv.y );
+				numVertices++;
+				indices.push( 0, numVertices-1, i == numSides-1 ? 1 : numVertices );
+				
+				const ns:Number = sinB*c + cosA*s;
+				const nc:Number = cosA*c - sinB*s;
+				c = nc;
+				s = ns;
+			}
+		}
+
 		
-		private static function buildHoop( innerRadius:Number, radius:Number, numSides:int, vertices:Vector.<Number>, indices:Vector.<uint>, uvMatrix:Matrix , color:uint):void
+		private static function buildHoop( innerRadius:Number, radius:Number, numSides:int, vertices:Vector.<Number>, indices:Vector.<uint>, uvMatrix:Matrix , color:uint, textureAlongPath:Boolean):void
 		{
 			var numVertices:int = 0;
 			
@@ -267,8 +380,16 @@ package starling.display.graphics
 			{
 				var x:Number = s * radius;
 				var y:Number = -c * radius;
-				_uv.x = x;
-				_uv.y = y;
+				if ( textureAlongPath )
+				{
+					_uv.x = i / numSides;
+					_uv.y = 0;
+				}
+				else
+				{
+					_uv.x = x;
+					_uv.y = y;
+				}
 				if ( uvMatrix ) 
 					_uv = uvMatrix.transformPoint(_uv);
 				
@@ -277,8 +398,16 @@ package starling.display.graphics
 				
 				x = s * innerRadius;
 				y = -c * innerRadius;
-				_uv.x = x;
-				_uv.y = y;
+				if ( textureAlongPath )
+				{
+					_uv.x = i / numSides;
+					_uv.y = 1;
+				}
+				else
+				{
+					_uv.x = x;
+					_uv.y = y;
+				}
 				if ( uvMatrix ) 
 					_uv = uvMatrix.transformPoint(_uv);
 				
@@ -304,7 +433,12 @@ package starling.display.graphics
 		private static function buildFan( radius:Number, startAngle:Number, endAngle:Number, numSides:int, vertices:Vector.<Number>, indices:Vector.<uint>, uvMatrix:Matrix , color:uint):void
 		{
 			var numVertices:int = 0;
-			vertices.push( 0, 0, 0, 1, 1, 1, 1, 0.5, 0.5 );
+			
+			var r:Number = (color >> 16) / 255;
+			var g:Number = ((color & 0x00FF00) >> 8) / 255;
+			var b:Number = (color & 0x0000FF) / 255;
+			
+			vertices.push( 0, 0, 0, r, g, b, 1, 0.5, 0.5 );
 			numVertices++;
 			
 			var radiansPerDivision:Number = (Math.PI * 2) / numSides;
@@ -312,9 +446,7 @@ package starling.display.graphics
 			startRadians = startRadians < 0 ? -Math.ceil(-startRadians) : int(startRadians);
 			startRadians *= radiansPerDivision;
 			
-			var r:Number = (color >> 16) / 255;
-			var g:Number = ((color & 0x00FF00) >> 8) / 255;
-			var b:Number = (color & 0x0000FF) / 255;
+			
 			
 			for ( var i:int = 0; i <= numSides+1; i++ )
 			{
@@ -365,7 +497,7 @@ package starling.display.graphics
 			}
 		}
 		
-		private static function buildArc( innerRadius:Number, radius:Number, startAngle:Number, endAngle:Number, numSides:int, vertices:Vector.<Number>, indices:Vector.<uint>, uvMatrix:Matrix , color:uint):void
+		private static function buildArc( innerRadius:Number, radius:Number, startAngle:Number, endAngle:Number, numSides:int, vertices:Vector.<Number>, indices:Vector.<uint>, uvMatrix:Matrix , color:uint, textureAlongPath:Boolean):void
 		{
 			var nv:int = 0;
 			var radiansPerDivision:Number = (Math.PI * 2) / numSides;
@@ -422,17 +554,31 @@ package starling.display.graphics
 					x2 = prevX2 + t * (x2-prevX2);
 					y2 = prevY2 + t * (y2-prevY2);
 				}
-				
-				_uv.x = x;
-				_uv.y = y;
+				if ( textureAlongPath )
+				{
+					_uv.x = i / numSides;
+					_uv.y = 0;
+				}
+				else
+				{
+					_uv.x = x;
+					_uv.y = y;
+				}
 				if ( uvMatrix ) 
 					_uv = uvMatrix.transformPoint(_uv);
 				
 				vertices.push( x, y, 0, r, g, b, 1, _uv.x, _uv.y );
 				nv++;
-				
-				_uv.x = x2;
-				_uv.y = y2;
+				if ( textureAlongPath )
+				{
+					_uv.x = i / numSides;
+					_uv.y = 1;
+				}
+				else
+				{
+					_uv.x = x2;
+					_uv.y = y2;
+				}
 				if ( uvMatrix ) 
 					_uv = uvMatrix.transformPoint(_uv);
 				
@@ -451,5 +597,7 @@ package starling.display.graphics
 				}
 			}
 		}
+		
+		
 	}
 }

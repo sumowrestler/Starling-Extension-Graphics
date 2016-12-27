@@ -29,7 +29,13 @@ package starling.display.graphics
 		protected var _numVertIndex:int = 0;
 		protected var _numVerts:int = 0;
 		
+		protected var _verticesBufferAllocLen:int = 0;
+		protected var _indicesBufferAllocLen:int = 0;
+		
 		protected const INDEX_STRIDE_FOR_QUAD:int = 6;
+		
+		protected var _lostContext:Boolean = false;
+		
 		
 		public function FastStroke()
 		{
@@ -144,7 +150,7 @@ package starling.display.graphics
 			_numControlPoints += 2;
 			_numVerts += 18 * 2;
 			
-			if ( isInvalid == false )
+			if ( buffersInvalid == false )
 				setGeometryInvalid();
 		}
 		
@@ -231,37 +237,75 @@ package starling.display.graphics
 			return false;
 		}
 		
+		override public function validateNow():void
+		{
+			if ( geometryInvalid == false )
+				return;
+			
+			
+			if ( vertexBuffer && (buffersInvalid || uvsInvalid) )
+			{
+		//		vertexBuffer.dispose();
+		//		indexBuffer.dispose();
+			}
+			
+			if ( buffersInvalid || geometryInvalid )
+			{
+				buildGeometry();
+				applyUVMatrix();
+			}
+			else if ( uvsInvalid )
+			{
+				applyUVMatrix();
+			}
+		}
+		
 		override public function render( renderSupport:RenderSupport, parentAlpha:Number ):void
 		{
 			validateNow();
 			
 			if ( indices.length < 3 ) return;
 			
-			if ( isInvalid || uvsInvalid )
+			var numIndices:int = _numVertIndex;
+			if ( buffersInvalid || uvsInvalid )
 			{
 				// Upload vertex/index buffers.
 				
-				var numVertices:int = (_numControlPoints*2);
-				vertexBuffer = Starling.context.createVertexBuffer( numVertices, VERTEX_STRIDE );
-				vertexBuffer.uploadFromVector( vertices, 0, numVertices )
+				var numVertices:int = (_numControlPoints * 2);
+				if ( numVertices > _verticesBufferAllocLen || _lostContext )
+				{
+					if ( vertexBuffer != null )
+						vertexBuffer.dispose();
+					vertexBuffer = Starling.context.createVertexBuffer( numVertices, VERTEX_STRIDE );
+					_verticesBufferAllocLen = numVertices;					
+				}
 				
-				var numIndices:int = _numVertIndex;
-				indexBuffer = Starling.context.createIndexBuffer( numIndices );
+				vertexBuffer.uploadFromVector( vertices, 0, numVertices );
+				
+				if ( numIndices > _indicesBufferAllocLen || _lostContext )
+				{
+					if ( indexBuffer != null )
+						indexBuffer.dispose();
+					indexBuffer = Starling.context.createIndexBuffer( numIndices );
+					_indicesBufferAllocLen = numIndices;
+				}
+				
 				indexBuffer.uploadFromVector( indices, 0, numIndices );
 				
-				isInvalid = uvsInvalid = false;
+				_lostContext = buffersInvalid = uvsInvalid = false;
 			}
 			
 			
 			// always call this method when you write custom rendering code!
 			// it causes all previously batched quads/images to render.
 			renderSupport.finishQuadBatch();
+			renderSupport.raiseDrawCount();
 			
 			var context:Context3D = Starling.context;
 			if (context == null) throw new MissingContextError();
 			
-			RenderSupport.setBlendFactors(false, this.blendMode == BlendMode.AUTO ? renderSupport.blendMode : this.blendMode);
-			_material.drawTriangles( Starling.context, renderSupport.mvpMatrix3D, vertexBuffer, indexBuffer, parentAlpha*this.alpha );
+			RenderSupport.setBlendFactors(material.premultipliedAlpha, this.blendMode == BlendMode.AUTO ? renderSupport.blendMode : this.blendMode);
+			_material.drawTriangles( Starling.context, renderSupport.mvpMatrix3D, vertexBuffer, indexBuffer, parentAlpha*this.alpha, _numVertIndex / 3 );
 			
 			context.setTextureAt(0, null);
 			context.setTextureAt(1, null);
@@ -293,8 +337,14 @@ package starling.display.graphics
 			vertices[i++] = b;
 			vertices[i++] = a;
 			vertices[i++] = u;
-			vertices[i++] = 0;
+			vertices[i++] = 1;
 			
 		}
+		
+		override protected function onGraphicLostContext() : void
+		{
+			_lostContext = true;
+		}
+		
 	}
 }

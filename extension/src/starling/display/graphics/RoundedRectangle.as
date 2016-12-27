@@ -2,9 +2,11 @@ package starling.display.graphics
 {
 	import flash.geom.Matrix;
 	import flash.geom.Point;
+	import starling.display.geom.GraphicsPolygon;
 	
 	import starling.core.RenderSupport;
 	import starling.core.Starling;
+	import starling.geom.Polygon;
 
 	public class RoundedRectangle extends Graphic
 	{
@@ -294,5 +296,7 @@ package starling.display.graphics
 			strokePoints.push( 0, _height-blr );
 			strokePoints.push( 0, tlr );
 		}
+		
+		
 	}
 }

@@ -1,6 +1,8 @@
 package starling.display.graphicsEx
 {
 	import flash.geom.Point;
+	import starling.display.geom.GraphicsPolygon;
+	import starling.display.graphics.Graphic;
 	import starling.display.graphics.Stroke;
 	import starling.display.graphics.StrokeVertex;
 	import starling.display.IGraphicsData;
@@ -22,13 +24,16 @@ package starling.display.graphicsEx
 	import starling.display.materials.IMaterial;
 	import starling.display.DisplayObjectContainer;
 	import starling.display.util.CurveUtil;
+	import starling.display.graphics.Fill;
 
 	public class GraphicsEx extends Graphics
 	{
 		protected var _currentStrokeEx:StrokeEx;
-		
-		public function GraphicsEx(displayObjectContainer:DisplayObjectContainer)
+		protected var _strokeCullDistance:Number;
+		public function GraphicsEx(displayObjectContainer:DisplayObjectContainer, strokeCullDistance:Number = 0)
 		{
+			_strokeCullDistance = strokeCullDistance;
+			
 			super(displayObjectContainer);
 		}
 
@@ -55,7 +60,10 @@ package starling.display.graphicsEx
 				return 0;
 		}
 		
-			
+		public function currentStroke() : StrokeEx
+		{
+			return _currentStrokeEx;
+		}
 		
 		public function drawGraphicsData(graphicsData:Vector.<flash.display.IGraphicsData>):void
 		{
@@ -290,7 +298,6 @@ package starling.display.graphicsEx
 		
 		private function postProcessThicknessColorInternal(numVerts:int, startIndex:int, endIndex:int, verts:Vector.<StrokeVertex> , thicknessData:GraphicsExThicknessData, colorData:GraphicsExColorData ):void 
 		{
-			var numVerts:int = endIndex - startIndex;
 			var invNumVerts:Number = 1.0 / Number(numVerts);
 			var lerp:Number = 0;	
 			var inv255:Number = 1.0 / 255.0;
@@ -361,7 +368,6 @@ package starling.display.graphicsEx
 
 		protected function postProcessThicknessInternal(numVerts:int, startIndex:int, endIndex:int, verts:Vector.<StrokeVertex> , thicknessData:GraphicsExThicknessData ):void 
 		{
-			var numVerts:int = endIndex - startIndex;
 			var invNumVerts:Number = 1.0 / Number(numVerts);
 			var lerp:Number = 0;	
 			var inv255:Number = 1.0 / 255.0;
@@ -380,7 +386,7 @@ package starling.display.graphicsEx
 		override protected function getStrokeInstance():Stroke
 		{// Created to be able to extend class with different strokes for different folks.
 			_currentStrokeEx = new StrokeEx();
-			
+			_currentStrokeEx.setPointCullDistance(_strokeCullDistance);
 			return _currentStrokeEx as Stroke;
 		}
 		
@@ -520,8 +526,29 @@ package starling.display.graphicsEx
 			return C;
 		}
 		
+		public function exportStrokesToPolygons() : Vector.<GraphicsPolygon>
+		{
+			var retval:Vector.<GraphicsPolygon> = new Vector.<GraphicsPolygon>();
+			for ( var i:int = 0; i < _container.numChildren; i++)
+			{
+				if ( _container.getChildAt(i) is Stroke )
+					retval.push((Stroke(_container.getChildAt(i))).exportToPolygon());
+			}
+			
+			return retval;
+		}
 		
-
+		public function exportFillsToPolygons() : Vector.<GraphicsPolygon>
+		{
+			var retval:Vector.<GraphicsPolygon> = new Vector.<GraphicsPolygon>();
+			for ( var i:int = 0; i < _container.numChildren; i++)
+			{
+				if ( _container.getChildAt(i) is Fill)
+					retval.push((Fill(_container.getChildAt(i))).exportToPolygon());
+			}
+			
+			return retval;
+		}
 
 	}
 

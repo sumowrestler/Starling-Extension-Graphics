@@ -7,18 +7,25 @@ package starling.display.graphics
 	import starling.display.graphics.StrokeVertex;
 	import starling.textures.Texture;
 	import starling.display.graphics.util.TriangleUtil;
+	import starling.display.util.StrokeVertexUtil;
+	
 	import starling.utils.MatrixUtil;
 		
 	public class Stroke extends Graphic
 	{
 		protected var _line			:Vector.<StrokeVertex>;
-		protected var _numVertices		:int;
+		protected var _numVertices			:int;
+		protected var _numAllocedVertices	:int;
+		protected var _indexOfLastRenderedVertex:int = -1;
 		
 		protected static const c_degenerateUseNext:uint = 1;
 		protected static const c_degenerateUseLast:uint = 2;
 		protected var _hasDegenerates:Boolean = false;
 		
 		protected static var sCollissionHelper:StrokeCollisionHelper = null;
+		protected var _cullDistanceSquared:Number = 0.0;
+		protected var _lastScale:Number = 1.0;
+		protected var _isReusingLine:Boolean = false;
 		
 		public function Stroke()
 		{
@@ -35,7 +42,34 @@ package starling.display.graphics
 			clear();
 			super.dispose();
 		}
-
+		
+		public function setPointCullDistance(cullDistance:Number = 0.0) : void
+		{
+			_cullDistanceSquared = cullDistance * cullDistance;
+		}
+		
+		// clearForReuse is only valid when adding exactly the same amount of vertices as existed before the clear call.
+		// This method avoids the overhead of returning StrokeVertices to the pool
+		public function clearForReuse() : void
+		{
+			if ( _line == null || _line.length == 0 )
+			{
+				clear();
+				return;
+			}
+				
+			if(minBounds)
+			{
+				minBounds.x = minBounds.y = Number.POSITIVE_INFINITY; 
+				maxBounds.x = maxBounds.y = Number.NEGATIVE_INFINITY;
+			}
+			_numVertices = 0;
+			setGeometryInvalid(false);
+			_hasDegenerates = false;
+			_indexOfLastRenderedVertex = -1;
+			_isReusingLine = true;
+			
+		}
 		public function clear():void
 		{
 			if(minBounds)
@@ -51,10 +85,13 @@ package starling.display.graphics
 			}
 			else
 				_line = new Vector.<StrokeVertex>;
-				
+			
 			_numVertices = 0;
+			_numAllocedVertices = 0;
 			setGeometryInvalid();
 			_hasDegenerates = false;
+			_indexOfLastRenderedVertex = -1;
+			_isReusingLine = false;
 		}
 		
 		public function addDegenerates(destX:Number, destY:Number):void
@@ -92,7 +129,7 @@ package starling.display.graphics
 			var v:StrokeVertex = _line[index];
 			v.x = x;
 			v.y = y;
-			if ( isInvalid == false )
+			if ( buffersInvalid == false )
 				setGeometryInvalid();
 		}
 		
@@ -123,10 +160,9 @@ package starling.display.graphics
 									
 			var u:Number = 0;
 			var textures:Vector.<Texture> = _material.textures;
-			if ( textures.length > 0 && _line.length > 0 )
+			if ( textures.length > 0 && _numVertices > 0 )
 			{
-			
-				var prevVertex:StrokeVertex = _line[_line.length - 1];
+				var prevVertex:StrokeVertex = _line[_numVertices - 1];
 				var dx:Number = x - prevVertex.x;
 				var dy:Number = y - prevVertex.y;
 				var d:Number = Math.sqrt(dx*dx+dy*dy);
@@ -139,9 +175,21 @@ package starling.display.graphics
 			var r1:Number = (color1 >> 16) / 255;
 			var g1:Number = ((color1 & 0x00FF00) >> 8) / 255;
 			var b1:Number = (color1 & 0x0000FF) / 255;
-			
-			var v:StrokeVertex = StrokeVertex.getInstance();
-			_line[_numVertices] = v;
+			if ( _cullDistanceSquared > 0 && _numVertices > 0 )
+			{
+				var cullDX:Number = (x - _line[_numVertices - 1].x) * (x - _line[_numVertices - 1].x);
+				var cullDY:Number = (y - _line[_numVertices - 1].y) * (y - _line[_numVertices - 1].y);
+				if ( (cullDY + cullDX) < _cullDistanceSquared )
+					return;
+			}
+			var v:StrokeVertex;
+			if ( _isReusingLine )
+				v = _line[_numVertices];
+			else
+			{
+				v = StrokeVertex.getInstance();
+				_line[_numVertices] = v;
+			}
 			v.x = x;
 			v.y = y;
 			v.r1 = r0;
@@ -156,31 +204,37 @@ package starling.display.graphics
 			v.v = 0;
 			v.thickness = thickness;
 			v.degenerate = 0;
+			if ( _numAllocedVertices == _numVertices )
+				_numAllocedVertices++
+				
 			_numVertices++;
 			
-			if(x < minBounds.x) 
+			var halfThickness:Number = 0.5 * thickness;
+			
+			if((x-halfThickness) < minBounds.x) 
 			{
-				minBounds.x = x;
+				minBounds.x = (x-halfThickness);
 			}
-			else if(x > maxBounds.x)
+			else if((x+halfThickness) > maxBounds.x)
 			{
-				maxBounds.x = x;
+				maxBounds.x = (x+halfThickness);
 			}
 			
-			if(y < minBounds.y)
+			if((y-halfThickness) < minBounds.y)
 			{
-				minBounds.y = y;
+				minBounds.y = (y-halfThickness);
 			}
-			else if(y > maxBounds.y)
+			else if((y+halfThickness) > maxBounds.y)
 			{
-				maxBounds.y = y;
+				maxBounds.y = (y+halfThickness);
 			}
 			
 			if ( maxBounds.x == Number.NEGATIVE_INFINITY )
 				maxBounds.x = x;
 			if ( maxBounds.y == Number.NEGATIVE_INFINITY )	
 				maxBounds.y = y;
-			if ( isInvalid == false )
+				
+			if ( _isReusingLine == false && buffersInvalid == false )
 				setGeometryInvalid();
 		}
 		
@@ -198,37 +252,25 @@ package starling.display.graphics
 		
 		override protected function buildGeometry():void
 		{
-			//buildGeometryOriginal();
 			buildGeometryPreAllocatedVectors();
-		}
-		
-		protected function buildGeometryOriginal() : void
-		{
-			if ( _line == null || _line.length == 0 )
-				return; // block against odd cases.
-				
-			// This is the original (slower) code that does not preallocate the vectors for vertices and indices.	
-			vertices = new Vector.<Number>();
-			indices = new Vector.<uint>();
-				
-			var indexOffset:int = 0;
-					
-			var oldVerticesLength:int = vertices.length;
-			const oneOverVertexStride:Number = 1 / VERTEX_STRIDE;	
-			_numVertices = fixUpPolyLine( _line );
-			createPolyLine( _line, vertices, indices, indexOffset);
-			indexOffset += (vertices.length - oldVerticesLength) * oneOverVertexStride;
 		}
 		
 		protected function buildGeometryPreAllocatedVectors() : void
 		{
-			if ( _line == null || _line.length == 0 )
+			if ( _line == null || _line.length <= 1 )
 				return; // block against odd cases.
+			if ( _numAllocedVertices != _numVertices )
+				throw new Error("Stroke: Only use clearForReuse() when adding exactly the right number of vertices");
 				
 			// This is the code that uses the preAllocated code path for createPolyLinePreAlloc
 			var indexOffset:int = 0;
 			// First remove all deformed things in _line
 			_numVertices = fixUpPolyLine( _line );
+			if ( _cullDistanceSquared > 0.1 )
+			{
+				_numVertices = cullPolyLineByDistance(_line, _cullDistanceSquared, _indexOfLastRenderedVertex);
+				_numAllocedVertices = _numVertices;
+			}
 			
 			// Then use the line lenght to pre allocate the vertex vectors
 			var numVerts:int = _line.length * 18; // this looks odd, but for each StrokeVertex, we generate 18 verts in createPolyLine
@@ -236,21 +278,31 @@ package starling.display.graphics
 			
 			// In special cases, there is some time to save here. 
 			// If the new number of vertices is the same as in the previous list of vertices, there's no need to recreate the buffer of vertices and indices
-			if ( vertices == null || numVerts != vertices.length )
+			if ( _indexOfLastRenderedVertex == -1 )
 			{
-				vertices = new Vector.<Number>(numVerts, true);
+				if ( vertices == null || numVerts != vertices.length )
+				{
+					vertices = new Vector.<Number>(numVerts, true);
+				}
+				if ( indices == null || numIndices != indices.length )
+				{
+					indices = new Vector.<uint>(numIndices, true);
+				}	
+			} 
+			else
+			{
+				if ( vertices.fixed )
+					vertices = vertices.slice(); // need to do this to change fixed length into dynamic
+				if ( indices.fixed )
+					indices = indices.slice();// need to do this to change fixed length into dynamic
 			}
-			if ( indices == null || numIndices != indices.length )
-			{
-				indices = new Vector.<uint>(numIndices, true);
-			}	
 			
-			createPolyLinePreAlloc( _line, vertices, indices, _hasDegenerates);
+			createPolyLinePreAlloc( _line, vertices, indices, _hasDegenerates, _indexOfLastRenderedVertex);
 		
 			var oldVerticesLength:int = 0; // this is always zero in the old code, even if we use vertices.length in the original code. Not sure why it is here.
 			const oneOverVertexStride:Number = 1 / VERTEX_STRIDE;	
 			indexOffset += (vertices.length - oldVerticesLength) * oneOverVertexStride;
-			
+			_indexOfLastRenderedVertex = _line.length -1;
 		}
 		
 		///////////////////////////////////
@@ -260,21 +312,30 @@ package starling.display.graphics
 		protected static function createPolyLinePreAlloc( _line:Vector.<StrokeVertex>, 
 												vertices:Vector.<Number>, 
 												indices:Vector.<uint>, 
-												_hasDegenerates:Boolean):void 
+												_hasDegenerates:Boolean,
+												indexOfLastRenderedVertex:int):void 
 		{
 		
 			const numVertices:int = _line.length;
 			const PI:Number = Math.PI;
-			var vertCounter:int = 0;
-			var indiciesCounter:int = 0;
 			var lastD0:Number = 0;
 			var lastD1:Number = 0;
 			var degenerate:uint = 0;
 			var idx:uint = 0;
 			var treatAsFirst:Boolean;
 			var treatAsLast:Boolean;
+			var startIndex : int = indexOfLastRenderedVertex <= 0 ? 0 : indexOfLastRenderedVertex - 1;
+			var vertCounter:int = startIndex * 18;
+			var indiciesCounter:int = startIndex * 6;
+			var prevV1xPos:Number = 0.0;
+			var prevV1xNeg:Number = 0.0;
+			var prevV1yPos:Number = 0.0;
+			var prevV1yNeg:Number = 0.0;
+			var usePreviousVertPositionsOnNextLoop:Boolean = false;
+			var usePreviousVertPositions:Boolean = false;
 			
-			for ( var i:int = 0; i < numVertices; i++ )
+			
+			for ( var i:int = startIndex; i < numVertices; i++ )
 			{
 				idx = i;
 				if ( _hasDegenerates )
@@ -291,6 +352,13 @@ package starling.display.graphics
 					treatAsFirst = (idx == 0);
 					treatAsLast = ( idx == numVertices - 1 )
 				}
+				if ( usePreviousVertPositionsOnNextLoop )
+				{
+					usePreviousVertPositionsOnNextLoop = false;
+					usePreviousVertPositions = true;
+				}
+				else 
+					usePreviousVertPositions = false;
 				
 				var treatAsRegular:Boolean = treatAsFirst == false && treatAsLast == false;
 				
@@ -357,15 +425,23 @@ package starling.display.graphics
 					var arcCosDot:Number = Math.acos(dot);
 					elbowThickness /= Math.sin( (PI-arcCosDot) * 0.5);
 					
-					if ( elbowThickness > vThickness * 4 )
-					{
-						elbowThickness = vThickness * 4;
-					}
-					
 					if ( elbowThickness != elbowThickness ) // faster NaN comparison
 					{
 						elbowThickness = vThickness*0.5;
 					}
+					else if ( elbowThickness > vThickness * 4 )
+					{
+						elbowThickness = vThickness * 4;
+					}
+					if ( dot <= 0 && d1 < vThickness * 0.5)
+					{
+						usePreviousVertPositionsOnNextLoop = true;
+					}
+				}
+				else
+				{
+					lastD0 = d0;
+					lastD1 = d1;
 				}
 				
 				var n0x:Number = -d0y / d0;
@@ -385,8 +461,8 @@ package starling.display.graphics
 				var v1xNeg:Number = ( degenerate ) ? v1xPos : ( v1x - cnx );
 				var v1yNeg:Number = ( degenerate ) ? v1yPos : ( v1y - cny );
 			
-				vertices[vertCounter++] = v1xPos;
-				vertices[vertCounter++] = v1yPos;
+				vertices[vertCounter++] = usePreviousVertPositions == false ? v1xPos : prevV1xPos;
+				vertices[vertCounter++] = usePreviousVertPositions == false ? v1yPos : prevV1yPos;
 				vertices[vertCounter++] = 0;
 				vertices[vertCounter++] = v1.r2;
 				vertices[vertCounter++] = v1.g2;
@@ -396,6 +472,7 @@ package starling.display.graphics
 				vertices[vertCounter++] = 1;
 				vertices[vertCounter++] = v1xNeg;
 				vertices[vertCounter++] = v1yNeg;
+			
 				vertices[vertCounter++] = 0;
 				vertices[vertCounter++] = v1.r1;
 				vertices[vertCounter++] = v1.g1;
@@ -404,136 +481,31 @@ package starling.display.graphics
 				vertices[vertCounter++] = v1.u;
 				vertices[vertCounter++] = 0;
 				
+				prevV1xPos = v1xPos;
+				prevV1xNeg = v1xNeg;
+				prevV1yPos = v1yPos;
+				prevV1yNeg = v1yNeg;
+				
 				if ( i < numVertices - 1 )
 				{
 					var i2:int = (i << 1);
 					indices[indiciesCounter++] = i2;
-					indices[indiciesCounter++] = i2+2;
-					indices[indiciesCounter++] = i2+1;
 					indices[indiciesCounter++] = i2+1;
 					indices[indiciesCounter++] = i2+2;
 					indices[indiciesCounter++] = i2+3;
+					indices[indiciesCounter++] = i2+2;
+					indices[indiciesCounter++] = i2+1;
 				}
 				
 			}
 		}
 		
-		///////////////////////////////////
-		// Static helper methods - Old version of createPolyLine that does not use pre allocated vectors. Slower.
-		///////////////////////////////////
-		[inline]
-		protected static function createPolyLine( vertices:Vector.<StrokeVertex>, 
-												outputVertices:Vector.<Number>, 
-												outputIndices:Vector.<uint>, 
-												indexOffset:int ):void
-		{
-			
-			var sqrt:Function = Math.sqrt;
-			var sin:Function = Math.sin;
-			const numVertices:int = vertices.length;
-			const PI:Number = Math.PI;
-			
-			for ( var i:int = 0; i < numVertices; i++ )
-			{
-				var degenerate:uint = vertices[i].degenerate;
-				var idx:uint = i;
-				if ( degenerate != 0 ) {
-					idx = ( degenerate == c_degenerateUseLast ) ? ( i - 1 ) : ( i + 1 );
-				}
-				var treatAsFirst:Boolean = ( idx == 0 ) || ( vertices[ idx - 1 ].degenerate > 0 );
-				var treatAsLast:Boolean = ( idx == numVertices - 1 ) || ( vertices[ idx + 1 ].degenerate > 0 );
-				var idx0:uint = treatAsFirst ? idx : ( idx - 1 );
-				var idx2:uint = treatAsLast ? idx : ( idx + 1 );
-				
-				var v0:StrokeVertex = vertices[idx0];
-				var v1:StrokeVertex = vertices[idx];
-				var v2:StrokeVertex = vertices[idx2];
-				
-				var v0x:Number = v0.x;
-				var v0y:Number = v0.y;
-				var v1x:Number = v1.x;
-				var v1y:Number = v1.y;
-				var v2x:Number = v2.x;
-				var v2y:Number = v2.y;
-				
-				var d0x:Number = v1x - v0x;
-				var d0y:Number = v1y - v0y;
-				var d1x:Number = v2x - v1x;
-				var d1y:Number = v2y - v1y;
-				
-				if ( treatAsLast )
-				{
-					v2x += d0x;
-					v2y += d0y;
-					
-					d1x = v2x - v1x;
-					d1y = v2y - v1y;
-				}
-				
-				if ( treatAsFirst )
-				{
-					v0x -= d1x;
-					v0y -= d1y;
-					
-					d0x = v1x - v0x;
-					d0y = v1y - v0y;
-				}
-				
-				var d0:Number = sqrt( d0x*d0x + d0y*d0y );
-				var d1:Number = sqrt( d1x*d1x + d1y*d1y );
-				
-				var elbowThickness:Number = v1.thickness*0.5;
-				if ( !(treatAsFirst || treatAsLast) )
-				{
-					// Thanks to Tom Clapham for spotting this relationship.
-					var dot:Number = (d0x*d1x+d0y*d1y) / (d0*d1);
-					elbowThickness /= sin((PI-Math.acos(dot)) * 0.5);
-					
-					if ( elbowThickness > v1.thickness * 4 )
-					{
-						elbowThickness = v1.thickness * 4;
-					}
-					
-					if ( isNaN( elbowThickness ) )
-					{
-						elbowThickness = v1.thickness*0.5;
-					}
-				}
-				
-				var n0x:Number = -d0y / d0;
-				var n0y:Number =  d0x / d0;
-				var n1x:Number = -d1y / d1;
-				var n1y:Number =  d1x / d1;
-				
-				var cnx:Number = n0x + n1x;
-				var cny:Number = n0y + n1y;
-				var c:Number = (1/sqrt( cnx*cnx + cny*cny )) * elbowThickness;
-				cnx *= c;
-				cny *= c;
-				
-				var v1xPos:Number = v1x + cnx;
-				var v1yPos:Number = v1y + cny;
-				var v1xNeg:Number = ( degenerate ) ? v1xPos : ( v1x - cnx );
-				var v1yNeg:Number = ( degenerate ) ? v1yPos : ( v1y - cny );
-			
-				
-				outputVertices.push( v1xPos, v1yPos, 0, v1.r2, v1.g2, v1.b2, v1.a2, v1.u, 1,
-								 v1xNeg, v1yNeg, 0, v1.r1, v1.g1, v1.b1, v1.a1, v1.u, 0 );
-				
-				
-				if ( i < numVertices - 1 )
-				{
-					var i2:int = indexOffset + (i << 1);
-					outputIndices.push(i2, i2 + 2, i2 + 1, i2 + 1, i2 + 2, i2 + 3);
-				}
-			}
-		}
 		
 		protected static function fixUpPolyLine( vertices:Vector.<StrokeVertex> ): int
 		{
-			
 			if ( vertices.length > 0 && vertices[0].degenerate > 0 ) { throw ( new Error("Degenerate on first line vertex") ); }
 			var idx:int = vertices.length - 1;
+			
 			while ( idx > 0 && vertices[idx].degenerate > 0 )
 			{
 				vertices.pop();
@@ -541,6 +513,41 @@ package starling.display.graphics
 			}
 			return vertices.length;
 		}
+		
+		protected static function cullPolyLineByDistance(line:Vector.<StrokeVertex>, cullDistanceSquared:Number, indexOfLastRenderedVertex:int ) : int
+		{
+			if ( line == null )
+				return 0;
+				
+			if ( line.length < 2 )
+				return line.length;
+			
+			var num:int = line.length;
+			var startIndex:int = indexOfLastRenderedVertex < 2 ? 1 : indexOfLastRenderedVertex -1;
+			var prevIndex:int = startIndex -1;
+			for ( var i:int = startIndex; i < num; i++ )
+			{
+				var xDist:Number = line[prevIndex].x - line[i].x;
+				var yDist:Number = line[prevIndex].y - line[i].y;
+				var distanceFromLast:Number = xDist * xDist + yDist * yDist;
+				if ( distanceFromLast < cullDistanceSquared )
+				{
+					StrokeVertexUtil.removeStrokeVertexAt(line, i);
+					num--;
+					if ( i > num)
+						return num;
+					i--;	
+				}
+				else
+				{
+					prevIndex = i;
+				}
+				
+			}
+			return line.length;
+		}
+		
+
 		
 		override protected function shapeHitTestLocalInternal( localX:Number, localY:Number ):Boolean
 		{
@@ -721,6 +728,61 @@ package starling.display.graphics
 			
 			return hasHit;
 		}
+		
+		public function scaleGeometry(newScale:Number) : void
+		{
+			if ( newScale == _lastScale || newScale <= 0 )
+				return;
+				
+			adjustThicknessOfGeometry(vertices, _lastScale, newScale );	
+			isGeometryScaled = true;
+			
+			_lastScale = newScale;
+			
+		}
+		
+		protected static function adjustThicknessOfGeometry(vertices:Vector.<Number>, oldScale:Number, newScale:Number) : void
+		{
+			var numVerts:int = vertices.length;
+			var scaleFactor:Number = oldScale / newScale;
+
+			for ( var i: int = 0; i < numVerts; i += 18 )
+			{
+				var posX:Number = vertices[i];
+				var posY:Number = vertices[i + 1];
+				var negX:Number = vertices[i+9];
+				var negY:Number = vertices[i + 10];
+				
+				var helpPointA_x:Number = posX;
+				var helpPointA_y:Number  = posY;
+				var helpPointB_x:Number  = negX;
+				var helpPointB_y:Number  = negY;
+				
+				var distance_x:Number = helpPointB_x - helpPointA_x;
+				var distance_y:Number = helpPointB_y - helpPointA_y;
+				
+				var halfDistance_x:Number = distance_x * 0.5;
+				var halfDistance_y:Number = distance_y * 0.5;
+				
+				var midPoint_x:Number = helpPointA_x + halfDistance_x;
+				var midPoint_y:Number = helpPointA_y + halfDistance_y;
+			
+				halfDistance_x *= scaleFactor;
+				halfDistance_y *= scaleFactor;
+				
+				posX = midPoint_x + halfDistance_x;
+				posY = midPoint_y + halfDistance_y;
+				negX = midPoint_x - halfDistance_x;
+				negY = midPoint_y - halfDistance_y;
+				
+				vertices[i] = posX;
+				vertices[i + 1] = posY;
+				vertices[i+9] = negX;
+				vertices[i+10] = negY;
+			}
+		}
+		
+		
 	}
 }
 
